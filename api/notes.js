@@ -1,55 +1,83 @@
-import fs from "fs";
-import path from "path";
+const fs = require("fs");
+const path = require("path");
 
 const dataFilePath = path.join("/tmp", "notes.json");
 
-export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, DELETE, OPTIONS"
-  );
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+exports.handler = async (event) => {
+  console.log("Received event:", JSON.stringify(event)); // Debug log
 
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
+  const { body, queryStringParameters } = event;
+  const httpMethod = event.requestContext?.http?.method;
+
+  const headers = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  };
+
+  if (httpMethod === "OPTIONS") {
+    return {
+      statusCode: 204,
+      headers,
+      body: null,
+    };
   }
 
-  switch (req.method) {
-    case "GET":
-      return getNotes(req, res);
-    case "POST":
-      return addNote(req, res);
-    case "PUT":
-      return updateNote(req, res);
-    case "DELETE":
-      return deleteNote(req, res);
-    default:
-      res.setHeader("Allow", ["GET", "POST", "PUT", "DELETE"]);
-      return res.status(405).end(`Method ${req.method} Not Allowed`);
+  try {
+    switch (httpMethod) {
+      case "GET":
+        return { ...getNotes(), headers };
+      case "POST":
+        return { ...addNote(JSON.parse(body)), headers };
+      case "PUT":
+        return { ...updateNote(JSON.parse(body)), headers };
+      case "DELETE":
+        return { ...deleteNote(queryStringParameters?.id), headers };
+      default:
+        return {
+          statusCode: 405,
+          headers,
+          body: JSON.stringify({ message: `Method ${httpMethod} Not Allowed` }),
+        };
+    }
+  } catch (error) {
+    console.error("Error processing the request:", error);
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({
+        message: "Internal Server Error",
+        error: error.message,
+      }),
+    };
   }
-}
-
-let notes = [
-  { id: 1, title: "Sample Note", content: "This is a sample note." },
-];
+};
 
 function readNotes() {
-  if (!fs.existsSync(dataFilePath)) {
-    fs.writeFileSync(dataFilePath, JSON.stringify([]), "utf-8");
+  try {
+    if (!fs.existsSync(dataFilePath)) {
+      fs.writeFileSync(dataFilePath, JSON.stringify([]), "utf-8");
+    }
+    const fileData = fs.readFileSync(dataFilePath, "utf-8");
+    return JSON.parse(fileData);
+  } catch (error) {
+    console.error("Error reading notes:", error);
+    throw new Error("Unable to read notes file");
   }
-  const fileData = fs.readFileSync(dataFilePath, "utf-8");
-  return JSON.parse(fileData);
 }
 
 function writeNotes(notes) {
-  fs.writeFileSync(dataFilePath, JSON.stringify(notes, null, 2), "utf-8");
+  try {
+    fs.writeFileSync(dataFilePath, JSON.stringify(notes, null, 2), "utf-8");
+  } catch (error) {
+    console.error("Error writing notes:", error);
+    throw new Error("Unable to write notes to file");
+  }
 }
 
-// Retrieve all notes
-function getNotes(req, res) {
+function getNotes() {
+  console.log("Getting notes...");
   let notes = readNotes();
-
   if (notes.length === 0) {
     notes = [
       {
@@ -60,40 +88,60 @@ function getNotes(req, res) {
     ];
     writeNotes(notes);
   }
-  res.status(200).json(notes);
+  console.log("Returning notes:", JSON.stringify(notes));
+  return {
+    statusCode: 200,
+    body: JSON.stringify(notes),
+  };
 }
 
-// Add a new note
-function addNote(req, res) {
+function addNote(data) {
+  console.log("Adding new note:", data);
   const notes = readNotes();
-  const newNote = {
-    id: Date.now(),
-    title: req.body.title,
-    content: req.body.content,
-  };
+  const newNote = { id: Date.now(), title: data.title, content: data.content };
   notes.push(newNote);
   writeNotes(notes);
-  res.status(201).json(newNote);
+  console.log("New note added:", JSON.stringify(newNote));
+  return {
+    statusCode: 201,
+    body: JSON.stringify(newNote),
+  };
 }
 
-// Update an existing note
-function updateNote(req, res) {
+function updateNote(data) {
+  console.log("Updating note with data:", data);
   const notes = readNotes();
-  const { id, title, content } = req.body;
+  const { id, title, content } = data;
   const noteIndex = notes.findIndex((note) => note.id === id);
   if (noteIndex === -1) {
-    return res.status(404).json({ message: "Note not found" });
+    return {
+      statusCode: 404,
+      body: JSON.stringify({ message: "Note not found" }),
+    };
   }
   notes[noteIndex] = { id, title, content };
   writeNotes(notes);
-  res.status(200).json(notes[noteIndex]);
+  console.log("Updated note:", JSON.stringify(notes[noteIndex]));
+  return {
+    statusCode: 200,
+    body: JSON.stringify(notes[noteIndex]),
+  };
 }
 
-// Delete a note
-function deleteNote(req, res) {
+function deleteNote(id) {
+  console.log("Deleting note with id:", id);
   const notes = readNotes();
-  const { id } = req.query;
   const updatedNotes = notes.filter((note) => note.id !== parseInt(id));
+  if (updatedNotes.length === notes.length) {
+    return {
+      statusCode: 404,
+      body: JSON.stringify({ message: "Note not found" }),
+    };
+  }
   writeNotes(updatedNotes);
-  res.status(200).json({ message: "Note deleted successfully" });
+  console.log("Note deleted successfully");
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: "Note deleted successfully" }),
+  };
 }
